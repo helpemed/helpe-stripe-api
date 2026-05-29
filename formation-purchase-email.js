@@ -21,24 +21,8 @@ function isExistingAuthUserError(message) {
   );
 }
 
-function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
-  const base = siteUrl.replace(/\/$/, '');
-  const loginUrl = `${base}/login.html?redirect=formation.html`;
-  const setupUrl = passwordSetupUrl || loginUrl;
-  const subject = 'Votre accès à la formation HelpE — choisissez votre mot de passe';
-
-  const setupBlock = passwordSetupUrl
-    ? `<p><strong>Prochaine étape (2 minutes) :</strong> cliquez ci-dessous pour <strong>choisir votre mot de passe</strong> et ouvrir la formation.</p>
-          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
-            <a href="${escapeHtml(passwordSetupUrl)}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Définir mon mot de passe →</a>
-          </td></tr></table>
-          <p style="font-size:13px;color:#64748b;">Ce lien est personnel et expire après environ une heure. Pensez aux courriers indésirables.</p>`
-    : `<p><strong>Prochaine étape :</strong> connectez-vous ou utilisez « Mot de passe oublié » sur la page de connexion avec <strong>exactement la même adresse</strong> que lors du paiement.</p>
-          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
-            <a href="${loginUrl}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Accéder à ma formation →</a>
-          </td></tr></table>`;
-
-  const html = `<!DOCTYPE html>
+function emailShell(title, bodyHtml) {
+  return `<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#f0f4f8;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
@@ -47,12 +31,10 @@ function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
       <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
         <tr><td style="background:linear-gradient(135deg,#1a1f2e,#1a3a5c);padding:28px 32px;color:#fff;">
           <div style="font-size:18px;font-weight:800;">Help<span style="color:#60a5fa;">E</span></div>
-          <p style="margin:16px 0 0;font-size:22px;font-weight:800;line-height:1.3;">Bienvenue dans la formation</p>
+          <p style="margin:16px 0 0;font-size:22px;font-weight:800;line-height:1.3;">${title}</p>
         </td></tr>
         <tr><td style="padding:28px 32px;color:#1a1f2e;font-size:15px;line-height:1.65;">
-          <p>Merci pour votre confiance — votre paiement est bien enregistré.</p>
-          ${setupBlock}
-          <p style="font-size:13px;color:#64748b;margin-top:24px;">Déjà un compte HelpE ? <a href="${loginUrl}" style="color:#1a6fb5;font-weight:600;">Connectez-vous ici</a> avec vos identifiants habituels.</p>
+          ${bodyHtml}
           <p style="font-size:13px;color:#64748b;margin-top:32px;border-top:1px solid #e2e8f0;padding-top:16px;">
             HelpE · Développement de patientèle pour les professionnels de santé libéraux<br>
             <a href="mailto:contact@helpe-med.com" style="color:#1a6fb5;">contact@helpe-med.com</a>
@@ -63,23 +45,59 @@ function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
   </table>
 </body>
 </html>`;
+}
 
-  const text = passwordSetupUrl
-    ? `Merci pour votre achat HelpE — votre paiement est enregistré.
+function buildThankYouEmail(siteUrl) {
+  const base = siteUrl.replace(/\/$/, '');
+  const subject = 'Merci pour votre achat — HelpE';
 
-Choisissez votre mot de passe (lien personnel, valable ~1 h) :
-${passwordSetupUrl}
+  const body = `
+          <p>Votre paiement pour la <strong>formation autonome HelpE</strong> est bien enregistré.</p>
+          <p>Vous allez recevoir dans un instant un <strong>second e-mail</strong> avec le lien pour <strong>choisir votre mot de passe</strong> et ouvrir votre espace formation.</p>
+          <p style="font-size:14px;color:#64748b;">Pensez à vérifier vos courriers indésirables. Utilisez <strong>exactement la même adresse e-mail</strong> que lors du paiement.</p>
+          <p style="font-size:14px;color:#64748b;margin-top:20px;">Accès à vie · Mises à jour incluses · Support e-mail 30 jours.</p>`;
 
-Ensuite connectez-vous : ${loginUrl}
+  const text = `Merci pour votre achat HelpE.
 
-HelpE — contact@helpe-med.com`
-    : `Merci pour votre achat HelpE.
+Votre paiement pour la formation autonome est bien enregistré.
 
-Connectez-vous ou utilisez « Mot de passe oublié » : ${loginUrl}
+Vous allez recevoir un second e-mail avec le lien pour choisir votre mot de passe et accéder à la formation.
 
 HelpE — contact@helpe-med.com`;
 
-  return { subject, html, text };
+  return { subject, html: emailShell('Merci pour votre confiance', body), text };
+}
+
+function buildPasswordSetupEmail(siteUrl, passwordSetupUrl) {
+  const base = siteUrl.replace(/\/$/, '');
+  const loginUrl = `${base}/login.html?redirect=formation.html`;
+  const subject = 'Définir votre mot de passe — accès formation HelpE';
+
+  const setupBlock = passwordSetupUrl
+    ? `<p>Cliquez ci-dessous pour <strong>choisir votre mot de passe</strong> (lien personnel, valable environ une heure) :</p>
+          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
+            <a href="${escapeHtml(passwordSetupUrl)}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Définir mon mot de passe →</a>
+          </td></tr></table>`
+    : `<p>Connectez-vous ou utilisez « Mot de passe oublié » sur la page de connexion :</p>
+          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
+            <a href="${loginUrl}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Accéder à ma formation →</a>
+          </td></tr></table>`;
+
+  const body = `
+          <p>Votre accès à la formation est prêt.</p>
+          ${setupBlock}
+          <p style="font-size:13px;color:#64748b;margin-top:24px;">Déjà un compte HelpE ? <a href="${loginUrl}" style="color:#1a6fb5;font-weight:600;">Connectez-vous ici</a>.</p>`;
+
+  const text = passwordSetupUrl
+    ? `Définissez votre mot de passe pour accéder à la formation HelpE :\n${passwordSetupUrl}\n\nConnexion : ${loginUrl}`
+    : `Accédez à votre formation : ${loginUrl}`;
+
+  return { subject, html: emailShell('Activez votre accès', body), text };
+}
+
+/** @deprecated kept for tests — use buildThankYouEmail + buildPasswordSetupEmail */
+function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
+  return buildPasswordSetupEmail(siteUrl, passwordSetupUrl);
 }
 
 async function sendResendEmail({ apiKey, from, to, subject, html, text }) {
@@ -156,7 +174,7 @@ async function generatePasswordSetupLink(supabase, email, siteUrl) {
   return { error: result.error || 'generateLink failed', link: null };
 }
 
-async function sendFormationPurchaseEmail({ email, siteUrl, passwordSetupUrl }) {
+async function sendPostPurchaseEmails({ email, siteUrl, passwordSetupUrl }) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.HELPE_RESEND_FROM || 'HelpE <onboarding@resend.dev>';
 
@@ -165,47 +183,72 @@ async function sendFormationPurchaseEmail({ email, siteUrl, passwordSetupUrl }) 
     return { ok: false, skipped: true };
   }
 
-  const { subject, html, text } = buildFormationPurchaseEmail(siteUrl, passwordSetupUrl);
-  const result = await sendResendEmail({ apiKey, from, to: email, subject, html, text });
+  const thankYou = buildThankYouEmail(siteUrl);
+  const thankYouResult = await sendResendEmail({
+    apiKey,
+    from,
+    to: email,
+    subject: thankYou.subject,
+    html: thankYou.html,
+    text: thankYou.text,
+  });
 
-  if (result.ok) {
-    console.log('[access] E-mail Resend post-achat envoyé:', email, result.id);
-  } else {
-    console.error('[access] Resend post-achat:', result.error);
+  if (!thankYouResult.ok) {
+    console.error('[access] Resend remerciement:', thankYouResult.error);
+    return { ok: false, thankYou: thankYouResult, password: null };
   }
-  return result;
+  console.log('[access] E-mail remerciement envoyé:', email, thankYouResult.id);
+
+  const password = buildPasswordSetupEmail(siteUrl, passwordSetupUrl);
+  const passwordResult = await sendResendEmail({
+    apiKey,
+    from,
+    to: email,
+    subject: password.subject,
+    html: password.html,
+    text: password.text,
+  });
+
+  if (!passwordResult.ok) {
+    console.error('[access] Resend mot de passe:', passwordResult.error);
+    return { ok: false, thankYou: thankYouResult, password: passwordResult };
+  }
+  console.log('[access] E-mail mot de passe envoyé:', email, passwordResult.id);
+
+  return { ok: true, thankYou: thankYouResult, password: passwordResult };
 }
 
-async function claimCheckoutSession(supabase, sessionId, email) {
-  if (!sessionId) return { claimed: true };
+async function isSessionProcessed(supabase, sessionId) {
+  if (!sessionId) return false;
+  const { data } = await supabase
+    .from('helpe_stripe_events')
+    .select('stripe_event_id')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  return Boolean(data);
+}
 
+async function markSessionProcessed(supabase, sessionId, email) {
+  if (!sessionId) return;
   const { error } = await supabase.from('helpe_stripe_events').insert({
     stripe_event_id: `access_${sessionId}`,
     session_id: sessionId,
     buyer_email: email,
   });
-
-  if (error) {
-    if (error.code === '23505' || /duplicate key|unique constraint/i.test(error.message)) {
-      console.log('[access] Session déjà traitée — pas de second e-mail:', sessionId);
-      return { claimed: false };
-    }
-    console.warn('[access] Idempotence session (insert):', error.message);
-    return { claimed: true, warn: error.message };
+  if (error && error.code !== '23505' && !/duplicate key|unique constraint/i.test(error.message)) {
+    console.warn('[access] mark session processed:', error.message);
   }
-
-  return { claimed: true };
 }
 
 /**
- * Enregistre l’acheteur + lien mot de passe dans l’e-mail Resend (un seul e-mail par session Stripe)
+ * Enregistre l’acheteur + 2 e-mails Resend (remerciement + mot de passe), une fois par session Stripe
  */
 async function activateBuyerAccess(supabase, email, siteUrl, options = {}) {
   const normalizedEmail = email.trim().toLowerCase();
   const sessionId = options.sessionId || null;
 
-  const claim = await claimCheckoutSession(supabase, sessionId, normalizedEmail);
-  if (!claim.claimed) {
+  if (sessionId && (await isSessionProcessed(supabase, sessionId))) {
+    console.log('[access] Session déjà traitée — pas de renvoi:', sessionId);
     return {
       ok: true,
       email: normalizedEmail,
@@ -233,15 +276,27 @@ async function activateBuyerAccess(supabase, email, siteUrl, options = {}) {
   if (process.env.HELPE_INVITE_AFTER_PURCHASE !== 'false') {
     linkResult = await generatePasswordSetupLink(supabase, normalizedEmail, siteUrl);
     passwordSetupUrl = linkResult.link || null;
-  } else {
-    console.log('[access] HELPE_INVITE_AFTER_PURCHASE=false — pas de lien mot de passe');
   }
 
-  const resendResult = await sendFormationPurchaseEmail({
+  const resendResult = await sendPostPurchaseEmails({
     email: normalizedEmail,
     siteUrl,
     passwordSetupUrl,
   });
+
+  if (!resendResult.ok) {
+    return {
+      ok: false,
+      email: normalizedEmail,
+      error: resendResult.password?.error || resendResult.thankYou?.error || 'email_failed',
+      passwordLink: linkResult,
+      resend: resendResult,
+    };
+  }
+
+  if (sessionId) {
+    await markSessionProcessed(supabase, sessionId, normalizedEmail);
+  }
 
   return {
     ok: true,
@@ -254,5 +309,7 @@ async function activateBuyerAccess(supabase, email, siteUrl, options = {}) {
 module.exports = {
   activateBuyerAccess,
   buildFormationPurchaseEmail,
+  buildThankYouEmail,
+  buildPasswordSetupEmail,
   generatePasswordSetupLink,
 };
