@@ -24,6 +24,9 @@ Pousse le dossier `website/server` (ou le monorepo entier) sur GitHub.
 | `SUPABASE_URL` | Oui | `https://xxx.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Oui | clé service role |
 | `SITE_URL` | Oui | `https://helpe-med.com` |
+| `RESEND_API_KEY` | Recommandé | Même clé que Supabase (`re_...`) — e-mail bienvenue formation |
+| `HELPE_RESEND_FROM` | Recommandé | Ex. `HelpE <guides@contact.helpe-med.com>` (domaine vérifié Resend) |
+| `HELPE_INVITE_AFTER_PURCHASE` | Non | `false` pour désactiver l’e-mail Supabase Auth « définir mot de passe » |
 | `PORT` | Non | Render injecte `10000` par défaut |
 | `NODE_ENV` | Recommandé | `production` |
 

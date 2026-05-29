@@ -8,6 +8,7 @@ require('dotenv').config();
 const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
+const { activateBuyerAccess } = require('./formation-purchase-email');
 
 const PORT = Number(process.env.PORT) || 4242;
 const SITE_URL = (process.env.SITE_URL || 'https://helpe-med.com').replace(/\/$/, '');
@@ -51,6 +52,8 @@ app.get('/api/health', (_req, res) => {
     stripe: Boolean(stripe),
     supabase: Boolean(supabase),
     priceConfigured: Boolean(priceId),
+    resend: Boolean(process.env.RESEND_API_KEY),
+    inviteAfterPurchase: process.env.HELPE_INVITE_AFTER_PURCHASE !== 'false',
   });
 });
 
@@ -120,16 +123,11 @@ app.post(
         null;
 
       if (email) {
-        const normalizedEmail = email.trim().toLowerCase();
-        const { error } = await supabase.from('helpe_formation_buyers').upsert(
-          { email: normalizedEmail },
-          { onConflict: 'email' }
-        );
-        if (error) {
-          console.error('[webhook] Supabase upsert failed:', error.message);
-          return res.status(500).json({ error: 'Supabase upsert failed', detail: error.message });
+        const result = await activateBuyerAccess(supabase, email, SITE_URL);
+        if (!result.ok) {
+          console.error('[webhook] activateBuyerAccess failed:', result.error);
+          return res.status(500).json({ error: 'Supabase upsert failed', detail: result.error });
         }
-        console.log('[webhook] Buyer recorded:', normalizedEmail);
       } else {
         console.warn('[webhook] checkout.session.completed without email', session.id);
       }
@@ -172,19 +170,18 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
       return res.status(422).json({ ok: false, error: 'E-mail introuvable sur la session Stripe.' });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const { error } = await supabase.from('helpe_formation_buyers').upsert(
-      { email: normalizedEmail },
-      { onConflict: 'email' }
-    );
-
-    if (error) {
-      console.error('[confirm] Supabase upsert failed:', error.message);
-      return res.status(500).json({ ok: false, error: error.message });
+    const result = await activateBuyerAccess(supabase, email, SITE_URL);
+    if (!result.ok) {
+      console.error('[confirm] activateBuyerAccess failed:', result.error);
+      return res.status(500).json({ ok: false, error: result.error });
     }
 
-    console.log('[confirm] Buyer recorded via success page:', normalizedEmail);
-    return res.json({ ok: true, email: normalizedEmail });
+    return res.json({
+      ok: true,
+      email: result.email,
+      invite: result.invite,
+      resend: result.resend,
+    });
   } catch (err) {
     console.error('[confirm] Stripe error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
@@ -235,4 +232,5 @@ app.listen(PORT, () => {
   if (!priceId) console.warn('WARN: STRIPE_PRICE_ID missing');
   if (!webhookSecret) console.warn('WARN: STRIPE_WEBHOOK_SECRET missing (webhooks disabled until set)');
   if (!supabase) console.warn('WARN: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing');
+  if (!process.env.RESEND_API_KEY) console.warn('WARN: RESEND_API_KEY missing (no branded post-purchase email)');
 });
