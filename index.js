@@ -141,6 +141,56 @@ app.post(
 
 app.use(express.json({ limit: '32kb' }));
 
+app.post('/api/confirm-checkout-session', async (req, res) => {
+  if (!stripe || !supabase) {
+    return res.status(503).json({ error: 'Service non configuré.' });
+  }
+
+  const sessionId = typeof req.body?.session_id === 'string' ? req.body.session_id.trim() : '';
+  if (!sessionId || !sessionId.startsWith('cs_')) {
+    return res.status(400).json({ error: 'session_id invalide.' });
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      return res.status(402).json({
+        ok: false,
+        payment_status: session.payment_status,
+        error: 'Paiement non finalisé.',
+      });
+    }
+
+    const email =
+      session.customer_details?.email ||
+      session.customer_email ||
+      session.metadata?.email ||
+      null;
+
+    if (!email) {
+      return res.status(422).json({ ok: false, error: 'E-mail introuvable sur la session Stripe.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const { error } = await supabase.from('helpe_formation_buyers').upsert(
+      { email: normalizedEmail },
+      { onConflict: 'email' }
+    );
+
+    if (error) {
+      console.error('[confirm] Supabase upsert failed:', error.message);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log('[confirm] Buyer recorded via success page:', normalizedEmail);
+    return res.json({ ok: true, email: normalizedEmail });
+  } catch (err) {
+    console.error('[confirm] Stripe error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/create-checkout-session', async (req, res) => {
   if (!stripe || !priceId) {
     return res.status(503).json({
