@@ -13,7 +13,7 @@ const PORT = Number(process.env.PORT) || 4242;
 const SITE_URL = (process.env.SITE_URL || 'https://helpe-med.com').replace(/\/$/, '');
 
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
-const priceId = process.env.STRIPE_PRICE_ID;
+const priceId = process.env.STRIPE_PRICE_ID || process.env.STRIPE_PRICE_FORMATION;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -50,7 +50,47 @@ app.get('/api/health', (_req, res) => {
     service: 'helpe-stripe-api',
     stripe: Boolean(stripe),
     supabase: Boolean(supabase),
+    priceConfigured: Boolean(priceId),
   });
+});
+
+app.get('/api/stripe/diagnostic', async (_req, res) => {
+  if (!stripe || !priceId) {
+    return res.status(503).json({
+      ok: false,
+      error: 'STRIPE_SECRET_KEY ou STRIPE_PRICE_ID / STRIPE_PRICE_FORMATION manquant.',
+    });
+  }
+
+  const mode = stripeSecret.startsWith('sk_live_') ? 'live' : 'test';
+
+  try {
+    const price = await stripe.prices.retrieve(priceId);
+    return res.json({
+      ok: true,
+      stripeMode: mode,
+      priceId,
+      priceActive: price.active,
+      priceType: price.type,
+      currency: price.currency,
+      unitAmount: price.unit_amount,
+      hint:
+        price.type !== 'one_time'
+          ? 'Ce prix doit être « paiement unique » (one_time), pas un abonnement.'
+          : null,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      stripeMode: mode,
+      priceId,
+      error: err.message,
+      hint:
+        /no such price/i.test(err.message)
+          ? 'Price ID introuvable : vérifie test vs live dans Stripe, ou recopie le bon price_... depuis Produit → Tarifs.'
+          : 'Vérifie que STRIPE_SECRET_KEY et STRIPE_PRICE_ID viennent du même mode Stripe (test ou live).',
+    });
+  }
 });
 
 app.post(
@@ -131,6 +171,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
     console.error('[checkout] Stripe error:', err.message);
     res.status(500).json({
       error: 'Impossible de créer la session de paiement. Réessayez dans un instant.',
+      code: err.code || undefined,
+      detail: err.message,
     });
   }
 });
