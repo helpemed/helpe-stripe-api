@@ -1,5 +1,5 @@
 /**
- * E-mail post-achat formation — Resend (même stack que les guides HelpE)
+ * E-mail post-achat formation — Resend + lien mot de passe (generateLink Supabase)
  */
 
 function escapeHtml(s) {
@@ -10,10 +10,33 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function buildFormationPurchaseEmail(siteUrl) {
+function isExistingAuthUserError(message) {
+  const msg = String(message || '').toLowerCase();
+  return (
+    msg.includes('already been registered') ||
+    msg.includes('already registered') ||
+    msg.includes('user already') ||
+    msg.includes('duplicate') ||
+    msg.includes('exists')
+  );
+}
+
+function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
   const base = siteUrl.replace(/\/$/, '');
   const loginUrl = `${base}/login.html?redirect=formation.html`;
-  const subject = 'Votre accès à la formation HelpE est activé';
+  const setupUrl = passwordSetupUrl || loginUrl;
+  const subject = 'Votre accès à la formation HelpE — choisissez votre mot de passe';
+
+  const setupBlock = passwordSetupUrl
+    ? `<p><strong>Prochaine étape (2 minutes) :</strong> cliquez ci-dessous pour <strong>choisir votre mot de passe</strong> et ouvrir la formation.</p>
+          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
+            <a href="${escapeHtml(passwordSetupUrl)}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Définir mon mot de passe →</a>
+          </td></tr></table>
+          <p style="font-size:13px;color:#64748b;">Ce lien est personnel et expire après environ une heure. Pensez aux courriers indésirables.</p>`
+    : `<p><strong>Prochaine étape :</strong> connectez-vous ou utilisez « Mot de passe oublié » sur la page de connexion avec <strong>exactement la même adresse</strong> que lors du paiement.</p>
+          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
+            <a href="${loginUrl}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Accéder à ma formation →</a>
+          </td></tr></table>`;
 
   const html = `<!DOCTYPE html>
 <html lang="fr">
@@ -28,12 +51,8 @@ function buildFormationPurchaseEmail(siteUrl) {
         </td></tr>
         <tr><td style="padding:28px 32px;color:#1a1f2e;font-size:15px;line-height:1.65;">
           <p>Merci pour votre confiance — votre paiement est bien enregistré.</p>
-          <p><strong>Prochaine étape :</strong> définissez votre mot de passe pour accéder à l’espace formation (méthode pas à pas, fiches, templates, déontologie par profession).</p>
-          <p style="font-size:14px;color:#64748b;">Vous devriez recevoir <strong>un second e-mail</strong> « Invitation » pour choisir votre mot de passe. Pensez aux courriers indésirables. Utilisez <strong>exactement la même adresse</strong> que lors du paiement.</p>
-          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
-            <a href="${loginUrl}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Accéder à ma formation →</a>
-          </td></tr></table>
-          <p style="font-size:13px;color:#64748b;margin-top:24px;">Déjà un compte HelpE ? Connectez-vous avec vos identifiants habituels — l’accès formation est ajouté automatiquement.</p>
+          ${setupBlock}
+          <p style="font-size:13px;color:#64748b;margin-top:24px;">Déjà un compte HelpE ? <a href="${loginUrl}" style="color:#1a6fb5;font-weight:600;">Connectez-vous ici</a> avec vos identifiants habituels.</p>
           <p style="font-size:13px;color:#64748b;margin-top:32px;border-top:1px solid #e2e8f0;padding-top:16px;">
             HelpE · Développement de patientèle pour les professionnels de santé libéraux<br>
             <a href="mailto:contact@helpe-med.com" style="color:#1a6fb5;">contact@helpe-med.com</a>
@@ -45,16 +64,22 @@ function buildFormationPurchaseEmail(siteUrl) {
 </body>
 </html>`;
 
-  const text = `Merci pour votre achat HelpE — votre paiement est enregistré.
+  const text = passwordSetupUrl
+    ? `Merci pour votre achat HelpE — votre paiement est enregistré.
 
-Définissez votre mot de passe via l'e-mail d'invitation (vérifiez les spams), puis connectez-vous :
-${loginUrl}
+Choisissez votre mot de passe (lien personnel, valable ~1 h) :
+${passwordSetupUrl}
 
-Utilisez la même adresse e-mail que lors du paiement.
+Ensuite connectez-vous : ${loginUrl}
+
+HelpE — contact@helpe-med.com`
+    : `Merci pour votre achat HelpE.
+
+Connectez-vous ou utilisez « Mot de passe oublié » : ${loginUrl}
 
 HelpE — contact@helpe-med.com`;
 
-  return { subject, html, text, loginUrl: escapeHtml(loginUrl) };
+  return { subject, html, text };
 }
 
 async function sendResendEmail({ apiKey, from, to, subject, html, text }) {
@@ -75,55 +100,63 @@ async function sendResendEmail({ apiKey, from, to, subject, html, text }) {
   return { ok: true, id: data.id ?? null };
 }
 
-async function inviteBuyerAuth(supabase, email, siteUrl) {
-  const inviteEnabled = process.env.HELPE_INVITE_AFTER_PURCHASE !== 'false';
-  if (!inviteEnabled) {
-    console.log('[access] HELPE_INVITE_AFTER_PURCHASE=false — pas d’invitation Auth');
-    return { ok: true, skipped: true };
+async function generatePasswordSetupLink(supabase, email, siteUrl) {
+  const redirectTo = `${siteUrl.replace(/\/$/, '')}/reset-password.html`;
+
+  async function tryLink(type) {
+    const { data, error } = await supabase.auth.admin.generateLink({
+      type,
+      email,
+      options: { redirectTo },
+    });
+    if (error) return { error: error.message, link: null };
+    const link = data?.properties?.action_link || null;
+    if (!link) return { error: 'action_link missing', link: null };
+    return { error: null, link, type };
   }
 
-  const redirectTo = siteUrl ? `${siteUrl.replace(/\/$/, '')}/reset-password.html` : undefined;
-  const inviteOptions = redirectTo ? { redirectTo } : {};
-
-  const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, inviteOptions);
-
-  if (!inviteError) {
-    console.log('[access] Invitation Auth envoyée:', email);
-    return { ok: true };
+  let result = await tryLink('invite');
+  if (result.link) {
+    console.log('[access] Lien mot de passe (invite):', email);
+    return result;
   }
 
-  const msg = inviteError.message || '';
-  const alreadyUser =
-    msg.includes('already been registered') ||
-    msg.includes('already registered') ||
-    /duplicate|exists/i.test(msg);
-
-  if (alreadyUser) {
-    console.log('[access] Compte Auth déjà existant:', email);
-    return { ok: true, existing: true };
+  if (isExistingAuthUserError(result.error)) {
+    result = await tryLink('recovery');
+    if (result.link) {
+      console.log('[access] Lien mot de passe (recovery):', email);
+      return result;
+    }
   }
 
-  console.warn('[access] inviteUserByEmail échec, tentative createUser:', msg);
+  console.warn('[access] generateLink invite/recovery échec, tentative createUser:', result.error);
   const { error: createError } = await supabase.auth.admin.createUser({
     email,
     email_confirm: true,
   });
 
-  if (createError) {
-    const createDup =
-      createError.message?.includes('already been registered') ||
-      createError.message?.includes('already registered') ||
-      /duplicate|exists/i.test(createError.message || '');
-    if (createDup) return { ok: true, existing: true };
+  if (createError && !isExistingAuthUserError(createError.message)) {
     console.error('[access] createUser:', createError.message);
-    return { ok: false, error: createError.message };
+    return { error: createError.message, link: null };
   }
 
-  console.log('[access] Utilisateur Auth créé (e-mail confirmé):', email);
-  return { ok: true, created: true };
+  result = await tryLink('recovery');
+  if (result.link) {
+    console.log('[access] Lien mot de passe (recovery après create):', email);
+    return result;
+  }
+
+  result = await tryLink('invite');
+  if (result.link) {
+    console.log('[access] Lien mot de passe (invite après create):', email);
+    return result;
+  }
+
+  console.error('[access] Impossible de générer le lien mot de passe:', result.error);
+  return { error: result.error || 'generateLink failed', link: null };
 }
 
-async function sendFormationPurchaseEmail({ email, siteUrl }) {
+async function sendFormationPurchaseEmail({ email, siteUrl, passwordSetupUrl }) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.HELPE_RESEND_FROM || 'HelpE <onboarding@resend.dev>';
 
@@ -132,7 +165,7 @@ async function sendFormationPurchaseEmail({ email, siteUrl }) {
     return { ok: false, skipped: true };
   }
 
-  const { subject, html, text } = buildFormationPurchaseEmail(siteUrl);
+  const { subject, html, text } = buildFormationPurchaseEmail(siteUrl, passwordSetupUrl);
   const result = await sendResendEmail({ apiKey, from, to: email, subject, html, text });
 
   if (result.ok) {
@@ -144,7 +177,7 @@ async function sendFormationPurchaseEmail({ email, siteUrl }) {
 }
 
 /**
- * Enregistre l’acheteur + invitation mot de passe (Supabase Auth) + e-mail bienvenue (Resend)
+ * Enregistre l’acheteur + lien mot de passe dans l’e-mail Resend (un seul e-mail)
  */
 async function activateBuyerAccess(supabase, email, siteUrl) {
   const normalizedEmail = email.trim().toLowerCase();
@@ -161,16 +194,26 @@ async function activateBuyerAccess(supabase, email, siteUrl) {
 
   console.log('[access] Buyer recorded:', normalizedEmail);
 
-  const inviteResult = await inviteBuyerAuth(supabase, normalizedEmail, siteUrl);
+  let passwordSetupUrl = null;
+  let linkResult = { ok: false, skipped: true };
+
+  if (process.env.HELPE_INVITE_AFTER_PURCHASE !== 'false') {
+    linkResult = await generatePasswordSetupLink(supabase, normalizedEmail, siteUrl);
+    passwordSetupUrl = linkResult.link || null;
+  } else {
+    console.log('[access] HELPE_INVITE_AFTER_PURCHASE=false — pas de lien mot de passe');
+  }
+
   const resendResult = await sendFormationPurchaseEmail({
     email: normalizedEmail,
     siteUrl,
+    passwordSetupUrl,
   });
 
   return {
     ok: true,
     email: normalizedEmail,
-    invite: inviteResult,
+    passwordLink: linkResult,
     resend: resendResult,
   };
 }
@@ -178,4 +221,5 @@ async function activateBuyerAccess(supabase, email, siteUrl) {
 module.exports = {
   activateBuyerAccess,
   buildFormationPurchaseEmail,
+  generatePasswordSetupLink,
 };

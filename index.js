@@ -179,7 +179,7 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
     return res.json({
       ok: true,
       email: result.email,
-      invite: result.invite,
+      invite: result.passwordLink,
       resend: result.resend,
     });
   } catch (err) {
