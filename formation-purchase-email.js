@@ -176,11 +176,44 @@ async function sendFormationPurchaseEmail({ email, siteUrl, passwordSetupUrl }) 
   return result;
 }
 
+async function claimCheckoutSession(supabase, sessionId, email) {
+  if (!sessionId) return { claimed: true };
+
+  const { error } = await supabase.from('helpe_stripe_events').insert({
+    stripe_event_id: `access_${sessionId}`,
+    session_id: sessionId,
+    buyer_email: email,
+  });
+
+  if (error) {
+    if (error.code === '23505' || /duplicate key|unique constraint/i.test(error.message)) {
+      console.log('[access] Session déjà traitée — pas de second e-mail:', sessionId);
+      return { claimed: false };
+    }
+    console.warn('[access] Idempotence session (insert):', error.message);
+    return { claimed: true, warn: error.message };
+  }
+
+  return { claimed: true };
+}
+
 /**
- * Enregistre l’acheteur + lien mot de passe dans l’e-mail Resend (un seul e-mail)
+ * Enregistre l’acheteur + lien mot de passe dans l’e-mail Resend (un seul e-mail par session Stripe)
  */
-async function activateBuyerAccess(supabase, email, siteUrl) {
+async function activateBuyerAccess(supabase, email, siteUrl, options = {}) {
   const normalizedEmail = email.trim().toLowerCase();
+  const sessionId = options.sessionId || null;
+
+  const claim = await claimCheckoutSession(supabase, sessionId, normalizedEmail);
+  if (!claim.claimed) {
+    return {
+      ok: true,
+      email: normalizedEmail,
+      duplicate: true,
+      resend: { skipped: true, reason: 'session_already_processed' },
+      passwordLink: { skipped: true },
+    };
+  }
 
   const { error } = await supabase.from('helpe_formation_buyers').upsert(
     { email: normalizedEmail },

@@ -123,7 +123,9 @@ app.post(
         null;
 
       if (email) {
-        const result = await activateBuyerAccess(supabase, email, SITE_URL);
+        const result = await activateBuyerAccess(supabase, email, SITE_URL, {
+          sessionId: session.id,
+        });
         if (!result.ok) {
           console.error('[webhook] activateBuyerAccess failed:', result.error);
           return res.status(500).json({ error: 'Supabase upsert failed', detail: result.error });
@@ -170,7 +172,7 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
       return res.status(422).json({ ok: false, error: 'E-mail introuvable sur la session Stripe.' });
     }
 
-    const result = await activateBuyerAccess(supabase, email, SITE_URL);
+    const result = await activateBuyerAccess(supabase, email, SITE_URL, { sessionId });
     if (!result.ok) {
       console.error('[confirm] activateBuyerAccess failed:', result.error);
       return res.status(500).json({ ok: false, error: result.error });
