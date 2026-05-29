@@ -120,18 +120,16 @@ app.post(
         null;
 
       if (email) {
+        const normalizedEmail = email.trim().toLowerCase();
         const { error } = await supabase.from('helpe_formation_buyers').upsert(
-          {
-            email: email.trim().toLowerCase(),
-            stripe_session_id: session.id,
-            stripe_customer_id:
-              typeof session.customer === 'string' ? session.customer : null,
-            paid_at: new Date().toISOString(),
-          },
+          { email: normalizedEmail },
           { onConflict: 'email' }
         );
-        if (error) console.error('[webhook] Supabase upsert failed:', error.message);
-        else console.log('[webhook] Buyer recorded:', email);
+        if (error) {
+          console.error('[webhook] Supabase upsert failed:', error.message);
+          return res.status(500).json({ error: 'Supabase upsert failed', detail: error.message });
+        }
+        console.log('[webhook] Buyer recorded:', normalizedEmail);
       } else {
         console.warn('[webhook] checkout.session.completed without email', session.id);
       }
@@ -162,7 +160,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${SITE_URL}/merci-formation.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${SITE_URL}/offres.html?checkout=cancelled`,
-      metadata: { email, product: 'formation_autonome' },
+      metadata: { email, helpe_product: 'formation_autonome', product: 'formation_autonome' },
       locale: 'fr',
     });
 
