@@ -22,17 +22,27 @@ function isExistingAuthUserError(message) {
 }
 
 function emailShell(title, bodyHtml) {
+  const safeTitle = escapeHtml(title);
   return `<!DOCTYPE html>
 <html lang="fr">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+</head>
 <body style="margin:0;padding:0;background:#f0f4f8;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 16px;">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f0f4f8;padding:32px 16px;">
     <tr><td align="center">
-      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
-        <tr><td style="background:linear-gradient(135deg,#1a1f2e,#1a3a5c);padding:28px 32px;color:#fff;">
-          <div style="font-size:18px;font-weight:800;">Help<span style="color:#60a5fa;">E</span></div>
-          <p style="margin:16px 0 0;font-size:22px;font-weight:800;line-height:1.3;">${title}</p>
-        </td></tr>
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
+        <tr>
+          <td bgcolor="#1a3a5c" style="background-color:#1a3a5c;background:linear-gradient(135deg,#1a1f2e,#1a3a5c);padding:28px 32px;">
+            <div style="font-size:18px;font-weight:800;line-height:1.3;mso-line-height-rule:exactly;">
+              <span style="color:#ffffff;">Help</span><span style="color:#60a5fa;">E</span>
+            </div>
+            <p style="margin:16px 0 0;font-size:22px;font-weight:800;line-height:1.3;color:#ffffff;mso-line-height-rule:exactly;">${safeTitle}</p>
+          </td>
+        </tr>
         <tr><td style="padding:28px 32px;color:#1a1f2e;font-size:15px;line-height:1.65;">
           ${bodyHtml}
           <p style="font-size:13px;color:#64748b;margin-top:32px;border-top:1px solid #e2e8f0;padding-top:16px;">
