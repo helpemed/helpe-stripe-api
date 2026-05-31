@@ -8,7 +8,7 @@ require('dotenv').config();
 const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
-const { activateBuyerAccess, sendPasswordResetEmail } = require('./formation-purchase-email');
+const { activateBuyerAccess, sendPasswordResetEmail, resolveAuthLink } = require('./formation-purchase-email');
 
 const PORT = Number(process.env.PORT) || 4242;
 const SITE_URL = (process.env.SITE_URL || 'https://helpe-med.com').replace(/\/$/, '');
@@ -188,6 +188,27 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
     console.error('[confirm] Stripe error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+app.get('/api/auth-link/:token', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: 'Service non configuré.' });
+  }
+
+  const token = typeof req.params.token === 'string' ? req.params.token.trim() : '';
+  const result = await resolveAuthLink(supabase, token);
+
+  if (!result.ok) {
+    const status = result.error === 'expired' ? 410 : 404;
+    return res.status(status).json({
+      error:
+        result.error === 'expired'
+          ? 'Ce lien a expiré. Demandez un nouvel e-mail depuis la page de connexion.'
+          : 'Lien invalide.',
+    });
+  }
+
+  return res.json({ url: result.url });
 });
 
 app.post('/api/send-password-reset', async (req, res) => {
