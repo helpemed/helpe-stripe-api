@@ -105,6 +105,33 @@ function buildPasswordSetupEmail(siteUrl, passwordSetupUrl) {
   return { subject, html: emailShell('Activez votre accès', body), text };
 }
 
+function buildPasswordResetEmail(siteUrl, resetLink) {
+  const subject = 'Réinitialisez votre mot de passe — HelpE';
+  const safeLink = escapeHtml(resetLink);
+
+  const body = `
+          <p>Bonjour,</p>
+          <p>Vous avez demandé à <strong>réinitialiser le mot de passe</strong> de votre compte HelpE associé à cette adresse e-mail.</p>
+          <p>Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe. Ce lien est valable pour une <strong>durée limitée</strong> et ne peut être utilisé qu'une fois.</p>
+          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
+            <a href="${safeLink}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Réinitialiser mon mot de passe →</a>
+          </td></tr></table>
+          <p style="font-size:13px;color:#64748b;">Si le bouton ne fonctionne pas, copiez-collez ce lien dans votre navigateur :<br>
+            <a href="${safeLink}" style="color:#1a6fb5;word-break:break-all;">${safeLink}</a>
+          </p>
+          <p style="font-size:13px;color:#64748b;margin-top:24px;">Si vous n'avez pas fait cette demande, vous pouvez ignorer ce message : votre mot de passe actuel reste inchangé.</p>`;
+
+  const text = `Réinitialisez votre mot de passe HelpE :
+
+${resetLink}
+
+Si vous n'avez pas fait cette demande, ignorez ce message.
+
+HelpE — contact@helpe-med.com`;
+
+  return { subject, html: emailShell('Réinitialisez votre mot de passe', body), text };
+}
+
 /** @deprecated kept for tests — use buildThankYouEmail + buildPasswordSetupEmail */
 function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
   return buildPasswordSetupEmail(siteUrl, passwordSetupUrl);
@@ -182,6 +209,65 @@ async function generatePasswordSetupLink(supabase, email, siteUrl) {
 
   console.error('[access] Impossible de générer le lien mot de passe:', result.error);
   return { error: result.error || 'generateLink failed', link: null };
+}
+
+async function generatePasswordResetLink(supabase, email, siteUrl) {
+  const redirectTo = `${siteUrl.replace(/\/$/, '')}/reset-password.html`;
+  const { data, error } = await supabase.auth.admin.generateLink({
+    type: 'recovery',
+    email: email.trim().toLowerCase(),
+    options: { redirectTo },
+  });
+
+  if (error) {
+    return { error: error.message, link: null };
+  }
+
+  const link = data?.properties?.action_link || null;
+  if (!link) {
+    return { error: 'action_link missing', link: null };
+  }
+
+  return { error: null, link };
+}
+
+/**
+ * E-mail « mot de passe oublié » via Resend (même DA que post-achat).
+ * Ne révèle pas si le compte existe (retour ok même sans envoi).
+ */
+async function sendPasswordResetEmail({ supabase, email, siteUrl }) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.HELPE_RESEND_FROM || 'HelpE <onboarding@resend.dev>';
+
+  if (!apiKey) {
+    console.warn('[reset] RESEND_API_KEY absent');
+    return { ok: false, error: 'resend_not_configured', sent: false };
+  }
+
+  const linkResult = await generatePasswordSetupLink(supabase, normalizedEmail, siteUrl);
+  if (!linkResult.link) {
+    console.log('[reset] Pas d’envoi (compte absent ou lien impossible):', normalizedEmail, linkResult.error);
+    return { ok: true, sent: false, reason: linkResult.error || 'no_link' };
+  }
+
+  const mail = buildPasswordResetEmail(siteUrl, linkResult.link);
+  const result = await sendResendEmail({
+    apiKey,
+    from,
+    to: normalizedEmail,
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+  });
+
+  if (!result.ok) {
+    console.error('[reset] Resend:', result.error);
+    return { ok: false, error: result.error, sent: false };
+  }
+
+  console.log('[reset] E-mail réinitialisation envoyé:', normalizedEmail, result.id);
+  return { ok: true, sent: true, id: result.id };
 }
 
 async function sendPostPurchaseEmails({ email, siteUrl, passwordSetupUrl }) {
@@ -321,5 +407,7 @@ module.exports = {
   buildFormationPurchaseEmail,
   buildThankYouEmail,
   buildPasswordSetupEmail,
+  buildPasswordResetEmail,
   generatePasswordSetupLink,
+  sendPasswordResetEmail,
 };

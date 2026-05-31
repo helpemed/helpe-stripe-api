@@ -8,7 +8,7 @@ require('dotenv').config();
 const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
-const { activateBuyerAccess } = require('./formation-purchase-email');
+const { activateBuyerAccess, sendPasswordResetEmail } = require('./formation-purchase-email');
 
 const PORT = Number(process.env.PORT) || 4242;
 const SITE_URL = (process.env.SITE_URL || 'https://helpe-med.com').replace(/\/$/, '');
@@ -187,6 +187,37 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
   } catch (err) {
     console.error('[confirm] Stripe error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/send-password-reset', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: 'Service non configuré.' });
+  }
+
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Adresse e-mail invalide.' });
+  }
+
+  try {
+    const result = await sendPasswordResetEmail({ supabase, email, siteUrl: SITE_URL });
+
+    if (!result.ok) {
+      console.error('[reset] sendPasswordResetEmail failed:', result.error);
+      return res.status(500).json({
+        error: 'Impossible d’envoyer l’e-mail pour le moment. Réessayez ou contactez contact@helpe-med.com.',
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message:
+        'Si un compte existe pour cette adresse, un e-mail de réinitialisation vient d’être envoyé. Vérifiez votre boîte mail (et vos spams).',
+    });
+  } catch (err) {
+    console.error('[reset] error:', err.message);
+    return res.status(500).json({ error: 'Erreur serveur. Réessayez dans un instant.' });
   }
 });
 
