@@ -9,6 +9,7 @@ const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const { activateBuyerAccess, sendPasswordResetEmail, resolveAuthLink } = require('./formation-purchase-email');
+const { validateBlueprintIntake, buildOrderRow } = require('./blueprint-intake');
 
 const PORT = Number(process.env.PORT) || 4242;
 const SITE_URL = (process.env.SITE_URL || 'https://helpe-med.com').replace(/\/$/, '');
@@ -54,6 +55,7 @@ app.get('/api/health', (_req, res) => {
     priceConfigured: Boolean(priceId),
     resend: Boolean(process.env.RESEND_API_KEY),
     inviteAfterPurchase: process.env.HELPE_INVITE_AFTER_PURCHASE !== 'false',
+    blueprintIntake: Boolean(supabase),
   });
 });
 
@@ -238,6 +240,54 @@ app.post('/api/send-password-reset', async (req, res) => {
     });
   } catch (err) {
     console.error('[reset] error:', err.message);
+    return res.status(500).json({ error: 'Erreur serveur. Réessayez dans un instant.' });
+  }
+});
+
+app.post('/api/blueprint-intake', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({
+      error: 'Service Blueprint indisponible (Supabase non configuré).',
+    });
+  }
+
+  const validation = validateBlueprintIntake(req.body);
+  if (!validation.ok) {
+    return res.status(400).json({ error: validation.errors.join(' '), errors: validation.errors });
+  }
+
+  const row = buildOrderRow(req.body);
+
+  try {
+    const { data, error } = await supabase
+      .from('helpe_blueprint_orders')
+      .insert(row)
+      .select('id, blueprint_id, created_at, status')
+      .single();
+
+    if (error) {
+      console.error('[blueprint-intake] Supabase insert failed:', error.message);
+      const hint =
+        error.code === '42P01' || /does not exist/i.test(error.message)
+          ? 'Exécutez website/supabase/helpe_blueprint_orders.sql dans Supabase.'
+          : undefined;
+      return res.status(500).json({
+        error: 'Enregistrement impossible. Réessayez ou contactez contact@helpe-med.com.',
+        detail: error.message,
+        hint,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      order_id: data.id,
+      blueprint_id: data.blueprint_id,
+      status: data.status,
+      message:
+        'Demande enregistrée. Nous vous envoyons le lien de paiement Stripe sous 24 h à ' + row.email + '.',
+    });
+  } catch (err) {
+    console.error('[blueprint-intake] error:', err.message);
     return res.status(500).json({ error: 'Erreur serveur. Réessayez dans un instant.' });
   }
 });

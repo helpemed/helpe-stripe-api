@@ -55,11 +55,19 @@ Pour pointer vers ton service Render, ajoute **avant** le script checkout sur le
 
 Ou déploie avec la variable d’environnement / build qui injecte cette URL.
 
-## 6. Vérification
+## 6. Blueprint — intake formulaire (Phase 1)
 
-- `GET https://<ton-service>.onrender.com/api/health` → `{ "ok": true, "service": "helpe-stripe-api" }`
+- Table : exécuter `website/supabase/helpe_blueprint_orders.sql` dans Supabase
+- Endpoint : `POST https://<ton-service>.onrender.com/api/blueprint-intake` (JSON, champs du formulaire `blueprint.html`)
+- Réponse : `{ "ok": true, "order_id": "...", "blueprint_id": "K-R-V" }`
+- Guide ops : `Output/blueprint-phase1-setup.md`
+
+## 7. Vérification
+
+- `GET https://<ton-service>.onrender.com/api/health` → `{ "ok": true, "blueprintIntake": true }`
 - Clic « Payer » sur le site → redirection Stripe Checkout
 - Paiement test → webhook → ligne dans Supabase `helpe_formation_buyers`
+- Formulaire Blueprint → ligne dans `helpe_blueprint_orders`
 
 ## 7. Plan gratuit Render
 

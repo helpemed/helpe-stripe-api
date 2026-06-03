@@ -157,7 +157,7 @@ async function sendResendEmail({ apiKey, from, to, subject, html, text }) {
   return { ok: true, id: data.id ?? null };
 }
 
-/** Lien public court helpe-med.com/acces.html?k=… (masque l’URL Supabase dans l’e-mail) */
+/** Lien public court helpe-med.com/reset-password.html?k=… (masque l’URL Supabase dans l’e-mail) */
 async function createPublicAuthLink(supabase, targetUrl, siteUrl) {
   if (!targetUrl || !supabase) return targetUrl;
 
@@ -176,7 +176,7 @@ async function createPublicAuthLink(supabase, targetUrl, siteUrl) {
     return targetUrl;
   }
 
-  return `${base}/acces.html?k=${token}`;
+  return `${base}/reset-password.html?k=${token}`;
 }
 
 async function resolveAuthLink(supabase, token) {
