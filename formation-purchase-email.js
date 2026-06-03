@@ -445,4 +445,6 @@ module.exports = {
   resolveAuthLink,
   generatePasswordSetupLink,
   sendPasswordResetEmail,
+  sendResendEmail,
+  emailShell,
 };

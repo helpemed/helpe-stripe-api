@@ -9,6 +9,7 @@ const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const { activateBuyerAccess, sendPasswordResetEmail, resolveAuthLink } = require('./formation-purchase-email');
+const { fulfillBlueprintCheckout } = require('./blueprint-purchase-email');
 const { validateBlueprintIntake, buildOrderRow } = require('./blueprint-intake');
 
 const PORT = Number(process.env.PORT) || 4242;
@@ -16,7 +17,58 @@ const SITE_URL = (process.env.SITE_URL || 'https://helpe-med.com').replace(/\/$/
 
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
 const priceId = process.env.STRIPE_PRICE_ID || process.env.STRIPE_PRICE_FORMATION;
+const priceBlueprint =
+  process.env.STRIPE_PRICE_BLUEPRINT || process.env.STRIPE_PRICE_ID_BLUEPRINT;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+function isBlueprintProduct(meta) {
+  const p = meta?.helpe_product || meta?.product;
+  return p === 'blueprint_679' || p === 'blueprint';
+}
+
+async function createStripeCheckoutSession({ product, email, orderId }) {
+  const isBlueprint = product === 'blueprint' || product === 'blueprint_679';
+
+  if (isBlueprint) {
+    if (!priceBlueprint) {
+      throw new Error('STRIPE_PRICE_BLUEPRINT non configuré sur le serveur.');
+    }
+    if (!orderId) {
+      throw new Error('order_id requis pour le paiement Blueprint.');
+    }
+    return stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: email || undefined,
+      line_items: [{ price: priceBlueprint, quantity: 1 }],
+      success_url: `${SITE_URL}/merci-blueprint.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${SITE_URL}/blueprint.html`,
+      metadata: {
+        helpe_product: 'blueprint_679',
+        product: 'blueprint_679',
+        order_id: String(orderId),
+        email: email || '',
+      },
+      locale: 'fr',
+    });
+  }
+
+  if (!priceId) {
+    throw new Error('STRIPE_PRICE_ID non configuré.');
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('Adresse e-mail invalide.');
+  }
+
+  return stripe.checkout.sessions.create({
+    mode: 'payment',
+    customer_email: email,
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: `${SITE_URL}/merci-formation.html?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${SITE_URL}/offres.html?checkout=cancelled`,
+    metadata: { email, helpe_product: 'formation_autonome', product: 'formation_autonome' },
+    locale: 'fr',
+  });
+}
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -53,6 +105,7 @@ app.get('/api/health', (_req, res) => {
     stripe: Boolean(stripe),
     supabase: Boolean(supabase),
     priceConfigured: Boolean(priceId),
+    blueprintPriceConfigured: Boolean(priceBlueprint),
     resend: Boolean(process.env.RESEND_API_KEY),
     inviteAfterPurchase: process.env.HELPE_INVITE_AFTER_PURCHASE !== 'false',
     blueprintIntake: Boolean(supabase),
@@ -98,6 +151,50 @@ app.get('/api/stripe/diagnostic', async (_req, res) => {
   }
 });
 
+app.get('/api/stripe/diagnostic-blueprint', async (_req, res) => {
+  if (!stripe || !priceBlueprint) {
+    return res.status(503).json({
+      ok: false,
+      error: 'STRIPE_SECRET_KEY ou STRIPE_PRICE_BLUEPRINT manquant.',
+    });
+  }
+
+  const mode = stripeSecret.startsWith('sk_live_') ? 'live' : 'test';
+
+  try {
+    const price = await stripe.prices.retrieve(priceBlueprint);
+    const expectedCents = 67900;
+    return res.json({
+      ok: true,
+      product: 'blueprint_679',
+      stripeMode: mode,
+      priceId: priceBlueprint,
+      priceActive: price.active,
+      priceType: price.type,
+      currency: price.currency,
+      unitAmount: price.unit_amount,
+      amountMatches679:
+        price.currency === 'eur' && price.unit_amount === expectedCents,
+      hint:
+        price.type !== 'one_time'
+          ? 'Ce prix doit être paiement unique (one_time).'
+          : price.unit_amount !== expectedCents
+            ? 'Montant attendu : 67900 centimes (679 € TTC). Vérifie le tarif dans Stripe.'
+            : null,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      stripeMode: mode,
+      priceId: priceBlueprint,
+      error: err.message,
+      hint: /no such price/i.test(err.message)
+        ? 'Price ID introuvable : même mode test/live que STRIPE_SECRET_KEY.'
+        : null,
+    });
+  }
+});
+
 app.post(
   '/api/stripe/webhook',
   express.raw({ type: 'application/json' }),
@@ -118,22 +215,32 @@ app.post(
 
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
-      const email =
-        session.customer_details?.email ||
-        session.customer_email ||
-        session.metadata?.email ||
-        null;
 
-      if (email) {
-        const result = await activateBuyerAccess(supabase, email, SITE_URL, {
-          sessionId: session.id,
-        });
+      if (isBlueprintProduct(session.metadata)) {
+        const result = await fulfillBlueprintCheckout(supabase, session, SITE_URL);
         if (!result.ok) {
-          console.error('[webhook] activateBuyerAccess failed:', result.error);
-          return res.status(500).json({ error: 'Supabase upsert failed', detail: result.error });
+          console.error('[webhook] fulfillBlueprintCheckout failed:', result.error, session.id);
+          return res.status(500).json({ error: result.error });
         }
+        console.log('[webhook] Blueprint paid:', result.order_id, result.blueprint_id);
       } else {
-        console.warn('[webhook] checkout.session.completed without email', session.id);
+        const email =
+          session.customer_details?.email ||
+          session.customer_email ||
+          session.metadata?.email ||
+          null;
+
+        if (email) {
+          const result = await activateBuyerAccess(supabase, email, SITE_URL, {
+            sessionId: session.id,
+          });
+          if (!result.ok) {
+            console.error('[webhook] activateBuyerAccess failed:', result.error);
+            return res.status(500).json({ error: 'Supabase upsert failed', detail: result.error });
+          }
+        } else {
+          console.warn('[webhook] checkout.session.completed without email', session.id);
+        }
       }
     }
 
@@ -164,6 +271,23 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
       });
     }
 
+    if (isBlueprintProduct(session.metadata)) {
+      const result = await fulfillBlueprintCheckout(supabase, session, SITE_URL);
+      if (!result.ok) {
+        console.error('[confirm] fulfillBlueprintCheckout failed:', result.error);
+        return res.status(500).json({ ok: false, error: result.error });
+      }
+      return res.json({
+        ok: true,
+        product: 'blueprint_679',
+        order_id: result.order_id,
+        blueprint_id: result.blueprint_id,
+        email: result.email,
+        alreadyPaid: result.alreadyPaid,
+        resend: result.resend,
+      });
+    }
+
     const email =
       session.customer_details?.email ||
       session.customer_email ||
@@ -182,6 +306,7 @@ app.post('/api/confirm-checkout-session', async (req, res) => {
 
     return res.json({
       ok: true,
+      product: 'formation_autonome',
       email: result.email,
       invite: result.passwordLink,
       resend: result.resend,
@@ -278,14 +403,39 @@ app.post('/api/blueprint-intake', async (req, res) => {
       });
     }
 
-    return res.json({
+    const payload = {
       ok: true,
       order_id: data.id,
       blueprint_id: data.blueprint_id,
       status: data.status,
+      email: row.email,
       message:
-        'Demande enregistrée. Nous vous envoyons le lien de paiement Stripe sous 24 h à ' + row.email + '.',
-    });
+        'Demande enregistrée. Vous allez être redirigé vers le paiement sécurisé Stripe (679 € TTC).',
+    };
+
+    if (stripe && priceBlueprint) {
+      try {
+        const session = await createStripeCheckoutSession({
+          product: 'blueprint',
+          email: row.email,
+          orderId: data.id,
+        });
+        payload.checkout_url = session.url;
+        payload.checkout_session_id = session.id;
+      } catch (checkoutErr) {
+        console.error('[blueprint-intake] checkout session:', checkoutErr.message);
+        payload.checkout_error = checkoutErr.message;
+        payload.message =
+          'Demande enregistrée. Le paiement en ligne est momentanément indisponible : nous vous envoyons le lien Stripe sous 24 h à ' +
+          row.email +
+          '.';
+      }
+    } else {
+      payload.message =
+        'Demande enregistrée. Nous vous envoyons le lien de paiement Stripe sous 24 h à ' + row.email + '.';
+    }
+
+    return res.json(payload);
   } catch (err) {
     console.error('[blueprint-intake] error:', err.message);
     return res.status(500).json({ error: 'Erreur serveur. Réessayez dans un instant.' });
@@ -293,33 +443,29 @@ app.post('/api/blueprint-intake', async (req, res) => {
 });
 
 app.post('/api/create-checkout-session', async (req, res) => {
-  if (!stripe || !priceId) {
+  if (!stripe) {
     return res.status(503).json({
       error: 'Paiement indisponible (configuration serveur incomplète).',
     });
   }
 
+  const product = req.body?.product === 'blueprint' ? 'blueprint' : 'formation';
   const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ error: 'Adresse e-mail invalide.' });
-  }
+  const orderId = typeof req.body?.order_id === 'string' ? req.body.order_id.trim() : '';
 
   try {
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: email,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${SITE_URL}/merci-formation.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${SITE_URL}/offres.html?checkout=cancelled`,
-      metadata: { email, helpe_product: 'formation_autonome', product: 'formation_autonome' },
-      locale: 'fr',
-    });
-
+    const session = await createStripeCheckoutSession({ product, email, orderId });
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) {
     console.error('[checkout] Stripe error:', err.message);
-    res.status(500).json({
-      error: 'Impossible de créer la session de paiement. Réessayez dans un instant.',
+    const status =
+      err.message?.includes('requis') ||
+      err.message?.includes('invalide') ||
+      err.message?.includes('configuré')
+        ? 400
+        : 500;
+    res.status(status).json({
+      error: err.message || 'Impossible de créer la session de paiement. Réessayez dans un instant.',
       code: err.code || undefined,
       detail: err.message,
     });
@@ -334,6 +480,7 @@ app.listen(PORT, () => {
   console.log(`HelpE Stripe API listening on port ${PORT}`);
   if (!stripeSecret) console.warn('WARN: STRIPE_SECRET_KEY missing');
   if (!priceId) console.warn('WARN: STRIPE_PRICE_ID missing');
+  if (!priceBlueprint) console.warn('WARN: STRIPE_PRICE_BLUEPRINT missing (Blueprint checkout disabled)');
   if (!webhookSecret) console.warn('WARN: STRIPE_WEBHOOK_SECRET missing (webhooks disabled until set)');
   if (!supabase) console.warn('WARN: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing');
   if (!process.env.RESEND_API_KEY) console.warn('WARN: RESEND_API_KEY missing (no branded post-purchase email)');

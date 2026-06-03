@@ -19,7 +19,8 @@ Pousse le dossier `website/server` (ou le monorepo entier) sur GitHub.
 | Variable | Obligatoire | Exemple |
 |----------|-------------|---------|
 | `STRIPE_SECRET_KEY` | Oui | `sk_live_...` ou `sk_test_...` |
-| `STRIPE_PRICE_ID` | Oui | `price_...` |
+| `STRIPE_PRICE_ID` | Oui | `price_...` (formation 349 €) |
+| `STRIPE_PRICE_BLUEPRINT` | Oui (Blueprint) | `price_...` (679 € TTC, one_time) |
 | `STRIPE_WEBHOOK_SECRET` | Oui (webhooks) | `whsec_...` |
 | `SUPABASE_URL` | Oui | `https://xxx.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Oui | clé service role |
@@ -55,19 +56,20 @@ Pour pointer vers ton service Render, ajoute **avant** le script checkout sur le
 
 Ou déploie avec la variable d’environnement / build qui injecte cette URL.
 
-## 6. Blueprint — intake formulaire (Phase 1)
+## 6. Blueprint — intake + paiement (Phase 1 + 2)
 
-- Table : exécuter `website/supabase/helpe_blueprint_orders.sql` dans Supabase
-- Endpoint : `POST https://<ton-service>.onrender.com/api/blueprint-intake` (JSON, champs du formulaire `blueprint.html`)
-- Réponse : `{ "ok": true, "order_id": "...", "blueprint_id": "K-R-V" }`
-- Guide ops : `Output/blueprint-phase1-setup.md`
+- Tables : `website/supabase/helpe_blueprint_orders.sql` puis `helpe_blueprint_orders_phase2.sql` (colonnes `stripe_session_id`, `paid_at`)
+- Intake : `POST /api/blueprint-intake` → insert `pending_payment` + `checkout_url` si `STRIPE_PRICE_BLUEPRINT` est défini
+- Checkout manuel : `POST /api/create-checkout-session` avec `{ "product": "blueprint", "order_id": "...", "email": "..." }`
+- Webhook `checkout.session.completed` : si `helpe_product=blueprint_679` → `status=paid` + e-mail Resend (pas d’accès formation)
+- Page merci : `merci-blueprint.html` appelle `POST /api/confirm-checkout-session` (filet si webhook en retard)
+- Guide ops : `Output/blueprint-phase2-setup.md`
 
 ## 7. Vérification
 
-- `GET https://<ton-service>.onrender.com/api/health` → `{ "ok": true, "blueprintIntake": true }`
-- Clic « Payer » sur le site → redirection Stripe Checkout
-- Paiement test → webhook → ligne dans Supabase `helpe_formation_buyers`
-- Formulaire Blueprint → ligne dans `helpe_blueprint_orders`
+- `GET /api/health` → `blueprintPriceConfigured: true`
+- Formation : paiement test → `helpe_formation_buyers`
+- Blueprint : formulaire → Stripe → `helpe_blueprint_orders.status = paid`
 
 ## 7. Plan gratuit Render
 
