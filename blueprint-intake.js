@@ -99,7 +99,38 @@ function validateBlueprintIntake(body) {
     errors.push('Profession non reconnue.');
   }
 
+  const socialRules = [
+    ['facebook_publie', 'facebook_page', 'Facebook'],
+    ['instagram_publie', 'instagram_page', 'Instagram'],
+  ];
+
+  for (const [publieKey, pageKey, label] of socialRules) {
+    const publie = trimStr(body?.[publieKey]);
+    if (!publie) {
+      errors.push(`Réponse ${label} requise.`);
+      continue;
+    }
+    if (publie !== 'oui' && publie !== 'non') {
+      errors.push(`Réponse ${label} invalide.`);
+      continue;
+    }
+    if (publie === 'oui' && !trimStr(body?.[pageKey])) {
+      errors.push(`Nom de page ${label} requis si vous publiez.`);
+    }
+  }
+
   return { ok: errors.length === 0, errors, email };
+}
+
+function normalizeSocialFields(body) {
+  const facebookPublie = trimStr(body?.facebook_publie);
+  const instagramPublie = trimStr(body?.instagram_publie);
+  return {
+    facebook_publie: facebookPublie || null,
+    facebook_page: facebookPublie === 'oui' ? trimStr(body?.facebook_page) || null : null,
+    instagram_publie: instagramPublie || null,
+    instagram_page: instagramPublie === 'oui' ? trimStr(body?.instagram_page) || null : null,
+  };
 }
 
 function buildOrderRow(body) {
@@ -115,6 +146,7 @@ function buildOrderRow(body) {
     gbp: trimStr(body.gbp),
     avis: trimStr(body.avis),
     contenu: trimStr(body.contenu),
+    ...normalizeSocialFields(body),
     budget: trimStr(body.budget),
     objectif: trimStr(body.objectif),
     deontologie: trimStr(body.deontologie),
@@ -143,6 +175,10 @@ function buildOrderRow(body) {
     gbp: payload.gbp,
     avis: payload.avis,
     contenu: payload.contenu,
+    facebook_publie: payload.facebook_publie,
+    facebook_page: payload.facebook_page,
+    instagram_publie: payload.instagram_publie,
+    instagram_page: payload.instagram_page,
     budget: payload.budget,
     objectif: payload.objectif,
     deontologie: payload.deontologie,
