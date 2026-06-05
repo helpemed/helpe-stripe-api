@@ -2,6 +2,10 @@
  * E-mail post-achat formation — Resend + lien mot de passe (generateLink Supabase)
  */
 
+const crypto = require('crypto');
+
+const AUTH_LINK_TTL_MS = 60 * 60 * 1000;
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -105,6 +109,31 @@ function buildPasswordSetupEmail(siteUrl, passwordSetupUrl) {
   return { subject, html: emailShell('Activez votre accès', body), text };
 }
 
+function buildPasswordResetEmail(siteUrl, resetLink) {
+  const subject = 'Réinitialisez votre mot de passe — HelpE';
+  const safeLink = escapeHtml(resetLink);
+
+  const body = `
+          <p>Bonjour,</p>
+          <p>Vous avez demandé à <strong>réinitialiser le mot de passe</strong> de votre compte HelpE associé à cette adresse e-mail.</p>
+          <p>Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe. Ce lien est valable pour une <strong>durée limitée</strong> et ne peut être utilisé qu'une fois.</p>
+          <table cellpadding="0" cellspacing="0" style="margin:28px 0 8px;"><tr><td style="background:#1a6fb5;border-radius:50px;">
+            <a href="${safeLink}" style="display:inline-block;padding:14px 28px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">Réinitialiser mon mot de passe →</a>
+          </td></tr></table>
+          <p style="font-size:13px;color:#64748b;margin-top:24px;">Si le bouton ne fonctionne pas, répondez à cet e-mail ou écrivez-nous à <a href="mailto:contact@helpe-med.com" style="color:#1a6fb5;">contact@helpe-med.com</a>.</p>
+          <p style="font-size:13px;color:#64748b;margin-top:16px;">Si vous n'avez pas fait cette demande, vous pouvez ignorer ce message : votre mot de passe actuel reste inchangé.</p>`;
+
+  const text = `Réinitialisez votre mot de passe HelpE :
+
+${resetLink}
+
+Si vous n'avez pas fait cette demande, ignorez ce message.
+
+HelpE — contact@helpe-med.com`;
+
+  return { subject, html: emailShell('Réinitialisez votre mot de passe', body), text };
+}
+
 /** @deprecated kept for tests — use buildThankYouEmail + buildPasswordSetupEmail */
 function buildFormationPurchaseEmail(siteUrl, passwordSetupUrl) {
   return buildPasswordSetupEmail(siteUrl, passwordSetupUrl);
@@ -126,6 +155,50 @@ async function sendResendEmail({ apiKey, from, to, subject, html, text }) {
     return { ok: false, error: msg };
   }
   return { ok: true, id: data.id ?? null };
+}
+
+/** Lien public court helpe-med.com/reset-password.html?k=… (masque l’URL Supabase dans l’e-mail) */
+async function createPublicAuthLink(supabase, targetUrl, siteUrl) {
+  if (!targetUrl || !supabase) return targetUrl;
+
+  const token = crypto.randomBytes(18).toString('base64url');
+  const expiresAt = new Date(Date.now() + AUTH_LINK_TTL_MS).toISOString();
+  const base = siteUrl.replace(/\/$/, '');
+
+  const { error } = await supabase.from('helpe_auth_links').insert({
+    token,
+    target_url: targetUrl,
+    expires_at: expiresAt,
+  });
+
+  if (error) {
+    console.warn('[auth-link] Table absente ou erreur — lien direct:', error.message);
+    return targetUrl;
+  }
+
+  return `${base}/reset-password.html?k=${token}`;
+}
+
+async function resolveAuthLink(supabase, token) {
+  if (!supabase || !token || !/^[A-Za-z0-9_-]{12,64}$/.test(token)) {
+    return { ok: false, error: 'invalid_token' };
+  }
+
+  const { data, error } = await supabase
+    .from('helpe_auth_links')
+    .select('target_url, expires_at')
+    .eq('token', token)
+    .maybeSingle();
+
+  if (error || !data?.target_url) {
+    return { ok: false, error: 'not_found' };
+  }
+
+  if (new Date(data.expires_at).getTime() < Date.now()) {
+    return { ok: false, error: 'expired' };
+  }
+
+  return { ok: true, url: data.target_url };
 }
 
 async function generatePasswordSetupLink(supabase, email, siteUrl) {
@@ -184,7 +257,47 @@ async function generatePasswordSetupLink(supabase, email, siteUrl) {
   return { error: result.error || 'generateLink failed', link: null };
 }
 
-async function sendPostPurchaseEmails({ email, siteUrl, passwordSetupUrl }) {
+/**
+ * E-mail « mot de passe oublié » via Resend (même DA que post-achat).
+ * Ne révèle pas si le compte existe (retour ok même sans envoi).
+ */
+async function sendPasswordResetEmail({ supabase, email, siteUrl }) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.HELPE_RESEND_FROM || 'HelpE <onboarding@resend.dev>';
+
+  if (!apiKey) {
+    console.warn('[reset] RESEND_API_KEY absent');
+    return { ok: false, error: 'resend_not_configured', sent: false };
+  }
+
+  const linkResult = await generatePasswordSetupLink(supabase, normalizedEmail, siteUrl);
+  if (!linkResult.link) {
+    console.log('[reset] Pas d’envoi (compte absent ou lien impossible):', normalizedEmail, linkResult.error);
+    return { ok: true, sent: false, reason: linkResult.error || 'no_link' };
+  }
+
+  const publicLink = await createPublicAuthLink(supabase, linkResult.link, siteUrl);
+  const mail = buildPasswordResetEmail(siteUrl, publicLink);
+  const result = await sendResendEmail({
+    apiKey,
+    from,
+    to: normalizedEmail,
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+  });
+
+  if (!result.ok) {
+    console.error('[reset] Resend:', result.error);
+    return { ok: false, error: result.error, sent: false };
+  }
+
+  console.log('[reset] E-mail réinitialisation envoyé:', normalizedEmail, result.id);
+  return { ok: true, sent: true, id: result.id };
+}
+
+async function sendPostPurchaseEmails({ supabase, email, siteUrl, passwordSetupUrl }) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.HELPE_RESEND_FROM || 'HelpE <onboarding@resend.dev>';
 
@@ -209,7 +322,12 @@ async function sendPostPurchaseEmails({ email, siteUrl, passwordSetupUrl }) {
   }
   console.log('[access] E-mail remerciement envoyé:', email, thankYouResult.id);
 
-  const password = buildPasswordSetupEmail(siteUrl, passwordSetupUrl);
+  let publicSetupUrl = passwordSetupUrl;
+  if (passwordSetupUrl && supabase) {
+    publicSetupUrl = await createPublicAuthLink(supabase, passwordSetupUrl, siteUrl);
+  }
+
+  const password = buildPasswordSetupEmail(siteUrl, publicSetupUrl);
   const passwordResult = await sendResendEmail({
     apiKey,
     from,
@@ -289,6 +407,7 @@ async function activateBuyerAccess(supabase, email, siteUrl, options = {}) {
   }
 
   const resendResult = await sendPostPurchaseEmails({
+    supabase,
     email: normalizedEmail,
     siteUrl,
     passwordSetupUrl,
@@ -321,5 +440,11 @@ module.exports = {
   buildFormationPurchaseEmail,
   buildThankYouEmail,
   buildPasswordSetupEmail,
+  buildPasswordResetEmail,
+  createPublicAuthLink,
+  resolveAuthLink,
   generatePasswordSetupLink,
+  sendPasswordResetEmail,
+  sendResendEmail,
+  emailShell,
 };

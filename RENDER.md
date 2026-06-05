@@ -19,7 +19,8 @@ Pousse le dossier `website/server` (ou le monorepo entier) sur GitHub.
 | Variable | Obligatoire | Exemple |
 |----------|-------------|---------|
 | `STRIPE_SECRET_KEY` | Oui | `sk_live_...` ou `sk_test_...` |
-| `STRIPE_PRICE_ID` | Oui | `price_...` |
+| `STRIPE_PRICE_ID` | Oui | `price_...` (formation 349 €) |
+| `STRIPE_PRICE_BLUEPRINT` | Oui (Blueprint) | `price_...` (679 € TTC, one_time) |
 | `STRIPE_WEBHOOK_SECRET` | Oui (webhooks) | `whsec_...` |
 | `SUPABASE_URL` | Oui | `https://xxx.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Oui | clé service role |
@@ -55,12 +56,30 @@ Pour pointer vers ton service Render, ajoute **avant** le script checkout sur le
 
 Ou déploie avec la variable d’environnement / build qui injecte cette URL.
 
-## 6. Vérification
+## 6. Blueprint — intake + paiement (Phase 1 + 2)
 
-- `GET https://<ton-service>.onrender.com/api/health` → `{ "ok": true, "service": "helpe-stripe-api" }`
-- Clic « Payer » sur le site → redirection Stripe Checkout
-- Paiement test → webhook → ligne dans Supabase `helpe_formation_buyers`
+- Tables : `website/supabase/helpe_blueprint_orders.sql` puis `helpe_blueprint_orders_phase2.sql` (colonnes `stripe_session_id`, `paid_at`)
+- Intake : `POST /api/blueprint-intake` → insert `pending_payment` + `checkout_url` si `STRIPE_PRICE_BLUEPRINT` est défini
+- Checkout manuel : `POST /api/create-checkout-session` avec `{ "product": "blueprint", "order_id": "...", "email": "..." }`
+- Webhook `checkout.session.completed` : si `helpe_product=blueprint_679` → `status=paid` + e-mail Resend (pas d’accès formation)
+- Page merci : `merci-blueprint.html` appelle `POST /api/confirm-checkout-session` (filet si webhook en retard)
+- Guide ops : `Output/blueprint-phase2-setup.md`
 
-## 7. Plan gratuit Render
+## 7. Questionnaire pré-diagnostic (avant appel 30 min)
+
+- Table : `website/supabase/helpe_diagnostic_intake.sql`
+- Intake : `POST /api/diagnostic-intake` → insert + brief auto (`pre_diag` JSON) + e-mails Resend
+- Pages : `diagnostic.html`, `diagnostic-pub.html` (formulaire 3 étapes → Calendly)
+- Variable optionnelle : `HELPE_DIAGNOSTIC_NOTIFY_EMAIL` (défaut `contact@helpe-med.com`)
+- Guide ops : `Output/diagnostic-pre-questionnaire-setup-2026-06-05.md`
+
+## 8. Vérification
+
+- `GET /api/health` → `diagnosticIntake: true`
+- Formation : paiement test → `helpe_formation_buyers`
+- Blueprint : formulaire → Stripe → `helpe_blueprint_orders.status = paid`
+- Diagnostic : formulaire test → ligne `helpe_diagnostic_intake` + e-mail brief Alex
+
+## 9. Plan gratuit Render
 
 Le tier free **s’endort** après inactivité (~50 s au premier appel). Acceptable pour démarrer ; pour prod sérieuse, passe en Starter.
